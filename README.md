@@ -34,7 +34,7 @@ python3 sanctions.py --help
 | Key | Jurisdiction | List |
 |---|---|---|
 | `ofac_sdn` | US | [OFAC Specially Designated Nationals (SDN)](https://sanctionslist.ofac.treas.gov/) |
-| `ofac_cons` | US | OFAC Consolidated (non-SDN) lists |
+| `ofac_cons` | US | [OFAC Consolidated (non-SDN) lists](https://sanctionslist.ofac.treas.gov/) |
 | `seco` | CH | [SECO Swiss consolidated sanctions list](https://www.seco.admin.ch/seco/en/home/Aussenwirtschaftspolitik_Wirtschaftliche_Zusammenarbeit/Wirtschaftsbeziehungen/exportkontrollen-und-sanktionen/sanktionen-embargos.html) |
 | `eu` | EU / DE | [EU Consolidated Financial Sanctions list](https://data.europa.eu/data/datasets/consolidated-list-of-persons-groups-and-entities-subject-to-eu-financial-sanctions) |
 | `un` | UN | [UN Security Council consolidated list](https://main.un.org/securitycouncil/en/content/un-sc-consolidated-list) |
