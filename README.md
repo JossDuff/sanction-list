@@ -45,7 +45,7 @@ python3 sanctions.py --help
 
 `source, jurisdiction, list_id, entity_type, name, aliases, programs, dates_of_birth, places_of_birth, nationalities, address_countries, identifiers, crypto_addresses, listed_on, remarks, also_listed_in`
 
-- `entity_type` is `individual`, `entity`, `vessel`, or `aircraft`.
+- `entity_type` is `individual` or `entity`. Vessels and aircraft are excluded.
 - `also_listed_in` lists the other sources that contain the same name after normalization (accents removed, case and word order ignored). It is a navigation aid, **not** entity resolution. It misses transliteration differences and can link unrelated people who share a name.
 - SECO entries that have been de-listed are excluded.
 

@@ -515,7 +515,8 @@ def main() -> int:
     for key in keys:
         if key not in paths:
             continue
-        recs = PARSERS[key](paths[key], key)
+        # Only people and organisations go in the final list; vessels and aircraft are dropped.
+        recs = [r for r in PARSERS[key](paths[key], key) if r["entity_type"] not in ("vessel", "aircraft")]
         records.extend(recs)
         meta["sources"][key] = {**SOURCES[key], "file": str(paths[key]), "records": len(recs)}
         log(f"  [{key}] parsed {len(recs)} records")
