@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Download and merge official sanctions lists for the US, Switzerland and Germany.
 
+Only sanctioned individuals (natural persons) are kept. Companies, organisations,
+vessels and aircraft are dropped from the merged output. Entries whose source gives
+no type at all are kept and labelled "unspecified" rather than silently dropped.
+
 Usage:
     python3 sanctions.py                 # download everything and merge
     python3 sanctions.py --offline       # re-merge the most recent downloads
@@ -21,9 +25,10 @@ Sources
 
 Outputs (in --out, default ./output)
 -----------------------------------
-  sanctions_merged.csv    one row per listing per source, common schema
+  sanctions_merged.csv    one row per listed individual per source, common schema
   sanctions_merged.json   same data as JSON (list fields kept as arrays)
-  crypto_addresses.csv    every digital currency address found in the lists
+  crypto_addresses.csv    every digital currency address attributed to a listed individual
+  logs.txt                everything the script logged during the run
 """
 
 from __future__ import annotations
@@ -35,11 +40,13 @@ import json
 import re
 import shutil
 import sys
+import threading
 import time
+import traceback
 import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
-from collections import Counter, defaultdict
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -105,11 +112,30 @@ LIST_FIELDS = [
 ]
 
 USER_AGENT = "sanction-list-merger/1.0 (+https://github.com/)"
+UNSPECIFIED = "unspecified"  # entity_type for entries the source does not classify
+KEEP_TYPES = ("individual", UNSPECIFIED)
 EVM_ADDRESS = re.compile(r"\b0x[0-9a-fA-F]{40}\b")
 
 
+LOG_FILE = None  # output/logs.txt; opened in main() once the output directory is known
+LOG_LOCK = threading.Lock()  # downloads log from worker threads
+
+
 def log(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+    with LOG_LOCK:
+        print(msg, file=sys.stderr, flush=True)
+        if LOG_FILE is not None:
+            LOG_FILE.write(msg + "\n")
+            LOG_FILE.flush()
+
+
+def tag(key: str) -> str:
+    """Log prefix for a source, e.g. '[us]' or '[ch]'."""
+    return f"[{SOURCES[key]['jurisdiction'].lower()}]"
+
+
+def now() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 # --------------------------------------------------------------------------
@@ -126,22 +152,21 @@ def download(key: str, dest: Path, retries: int, timeout: int) -> Path:
     url = SOURCES[key]["url"]
     tmp = dest.with_suffix(".part")
     for attempt in range(1, retries + 1):
-        start = time.monotonic()
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(req, timeout=timeout) as resp, open(tmp, "wb") as fh:
                 shutil.copyfileobj(resp, fh, length=1 << 20)
             ET.parse(tmp)  # raises if the transfer was truncated
             tmp.replace(dest)
-            size_mb = dest.stat().st_size / 1e6
-            log(f"  [{key}] downloaded {size_mb:.1f} MB in {time.monotonic() - start:.0f}s")
+            log(f"{tag(key)} sanctions list downloaded from {url} at {now()}")
             return dest
         except Exception as exc:  # network errors, truncated XML, HTTP errors
-            log(f"  [{key}] attempt {attempt}/{retries} failed: {type(exc).__name__}: {exc}")
+            log(f"{tag(key)} download attempt {attempt}/{retries} from {url} failed at {now()}: "
+                f"{type(exc).__name__}: {exc}")
             if attempt < retries:
                 time.sleep(min(5 * attempt, 30))
     tmp.unlink(missing_ok=True)
-    raise RuntimeError(f"could not download {key} after {retries} attempts")
+    raise RuntimeError(f"could not download {url} after {retries} attempts")
 
 
 def download_all(keys: list[str], raw_dir: Path, retries: int, timeout: int) -> dict[str, Path]:
@@ -157,7 +182,7 @@ def download_all(keys: list[str], raw_dir: Path, retries: int, timeout: int) -> 
             try:
                 paths[key] = fut.result()
             except Exception as exc:
-                log(f"  [{key}] ERROR: {exc}")
+                log(f"{tag(key)} ERROR: {exc}")
                 failed.append(key)
     if failed:
         log(f"WARNING: failed sources will be missing from the merge: {', '.join(failed)}")
@@ -171,9 +196,9 @@ def latest_downloads(keys: list[str], data_dir: Path) -> dict[str, Path]:
         candidates = sorted(data_dir.glob(f"*/{key}.xml"))
         if candidates:
             paths[key] = candidates[-1]
-            log(f"  [{key}] using {candidates[-1]}")
+            log(f"{tag(key)} using previously downloaded {candidates[-1]}")
         else:
-            log(f"  [{key}] no local copy found, skipping")
+            log(f"{tag(key)} no local copy of {SOURCES[key]['name']} found, skipping")
     return paths
 
 
@@ -217,6 +242,7 @@ def record(source: str, **fields) -> dict:
     rec["source"] = source
     rec["jurisdiction"] = SOURCES[source]["jurisdiction"]
     rec.update(fields)
+    rec["entity_type"] = rec["entity_type"] or UNSPECIFIED
     for f in LIST_FIELDS:
         rec[f] = uniq(rec[f])
     rec["aliases"] = [a for a in rec["aliases"] if a.lower() != rec["name"].lower()]
@@ -378,8 +404,12 @@ def parse_seco(path: Path, source: str) -> list[dict]:
             continue  # the file keeps historical, de-listed targets
         subject = next((c for c in t if c.tag in ("individual", "entity", "object")), None)
         if subject is None:
-            continue
-        entity_type = subject.get("object-type", "object") if subject.tag == "object" else subject.tag
+            # Untyped target: keep it with whatever the target itself carries.
+            subject, entity_type = ET.Element("none"), ""
+        elif subject.tag == "object":
+            entity_type = subject.get("object-type", "object")
+        else:
+            entity_type = subject.tag
 
         name, aliases, dobs, pobs, nats, countries, ids = "", [], [], [], [], [], []
         for ident in subject.findall("identity"):
@@ -502,6 +532,23 @@ def main() -> int:
     if unknown:
         ap.error(f"unknown source(s): {', '.join(unknown)}")
 
+    # Everything logged from here on is also written to <out>/logs.txt.
+    global LOG_FILE
+    args.out.mkdir(parents=True, exist_ok=True)
+    LOG_FILE = open(args.out / "logs.txt", "w", encoding="utf-8")
+    try:
+        log(f"Run started at {now()}: {' '.join(sys.argv)}")
+        return run(keys, args)
+    except BaseException:
+        LOG_FILE.write(traceback.format_exc())  # stderr gets it from the interpreter
+        raise
+    finally:
+        log(f"Run finished at {now()}")
+        LOG_FILE.close()
+        LOG_FILE = None
+
+
+def run(keys: list[str], args: argparse.Namespace) -> int:
     if args.offline:
         log("Offline mode: looking for previous downloads...")
         paths = latest_downloads(keys, args.data_dir)
@@ -515,20 +562,23 @@ def main() -> int:
     for key in keys:
         if key not in paths:
             continue
-        # Only people and organisations go in the final list; vessels and aircraft are dropped.
-        recs = [r for r in PARSERS[key](paths[key], key) if r["entity_type"] not in ("vessel", "aircraft")]
+        # Only individual people go in the final list. Companies, organisations,
+        # vessels and aircraft are dropped. Entries with no type are kept as "unspecified".
+        recs = [r for r in PARSERS[key](paths[key], key) if r["entity_type"] in KEEP_TYPES]
         records.extend(recs)
         meta["sources"][key] = {**SOURCES[key], "file": str(paths[key]), "records": len(recs)}
-        log(f"  [{key}] parsed {len(recs)} records")
+        unspecified = sum(r["entity_type"] == UNSPECIFIED for r in recs)
+        log(f"{tag(key)} {len(recs) - unspecified} individuals parsed from {paths[key]}"
+            + (f" (plus {unspecified} entries with no type, kept as {UNSPECIFIED})" if unspecified else ""))
 
     cross_reference(records)
     write_outputs(records, args.out, meta)
 
     crypto = sum(len(r["crypto_addresses"]) for r in records)
-    by_type = Counter(r["entity_type"] for r in records)
-    log(f"\nMerged {len(records)} records from {len(meta['sources'])} source(s); {crypto} crypto addresses.")
-    log("By type: " + ", ".join(f"{t or 'unknown'}={n}" for t, n in by_type.most_common()))
-    log(f"Wrote {args.out}/sanctions_merged.csv, sanctions_merged.json, crypto_addresses.csv")
+    unspecified = sum(r["entity_type"] == UNSPECIFIED for r in records)
+    log(f"\nMerged {len(records)} records from {len(meta['sources'])} source(s): "
+        f"{len(records) - unspecified} individuals, {unspecified} {UNSPECIFIED}; {crypto} crypto addresses.")
+    log(f"Wrote {args.out}/sanctions_merged.csv, sanctions_merged.json, crypto_addresses.csv, logs.txt")
     missing = [k for k in keys if k not in paths]
     return 2 if missing else 0
 

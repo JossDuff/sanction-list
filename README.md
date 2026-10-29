@@ -1,6 +1,6 @@
 # sanction-list
 
-Downloads the official sanctions lists that apply in the US, Switzerland, and Germany, then merges them into one file with a shared schema.
+Downloads the official sanctions lists that apply in the US, Switzerland, and Germany, then merges them into one file with a shared schema. Only sanctioned individuals are kept. Companies, organisations, vessels, and aircraft are dropped. Entries that the source does not classify at all are kept and labelled `unspecified`.
 
 ## Usage
 
@@ -14,9 +14,10 @@ The script downloads every list in parallel. It takes a few minutes, sometimes 5
 
 | File | Contents |
 |---|---|
-| `sanctions_merged.csv` | One row per listing per source. Multi-value fields are `; `-separated |
+| `sanctions_merged.csv` | One row per listed individual per source. Multi-value fields are `; `-separated |
 | `sanctions_merged.json` | Same data, with multi-value fields as arrays, plus source metadata |
-| `crypto_addresses.csv` | Every digital currency address found, one per row |
+| `crypto_addresses.csv` | Every digital currency address attributed to a listed individual, one per row |
+| `logs.txt` | Everything the script logged during the run, overwritten each time |
 
 Raw downloads are kept in `data/YYYY-MM-DD/`.
 
@@ -45,7 +46,7 @@ python3 sanctions.py --help
 
 `source, jurisdiction, list_id, entity_type, name, aliases, programs, dates_of_birth, places_of_birth, nationalities, address_countries, identifiers, crypto_addresses, listed_on, remarks, also_listed_in`
 
-- `entity_type` is `individual` or `entity`. Vessels and aircraft are excluded.
+- `entity_type` is `individual`, or `unspecified` when the source gives no type for the entry. Companies, organisations, vessels, and aircraft are excluded before the merge. As of October 2026 every entry in every source has a type, so `unspecified` is a safeguard rather than something you will normally see.
 - `also_listed_in` lists the other sources that contain the same name after normalization (accents removed, case and word order ignored). It is a navigation aid, **not** entity resolution. It misses transliteration differences and can link unrelated people who share a name.
 - SECO entries that have been de-listed are excluded.
 
