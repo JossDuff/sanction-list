@@ -10,7 +10,7 @@ Requires Python 3.9+. No packages to install.
 python3 sanctions.py
 ```
 
-The script downloads every list in parallel. It takes a few minutes, sometimes 5 or more, because the Swiss SECO server is slow and often drops the connection partway through. Failed downloads are retried automatically. Results are written to `output/`:
+The script downloads every list in parallel. It takes a few minutes, sometimes 5 or more, because the Swiss SECO server is slow and often drops the connection partway through. Failed downloads are retried automatically. Each run writes its results to its own subfolder, named after the UTC start time, `output/YYYY-MM-DD_HH-MM-SS_UTC/`:
 
 | File | Contents |
 |---|---|
@@ -26,7 +26,7 @@ Raw downloads are kept in `data/YYYY-MM-DD/`.
 ```sh
 python3 sanctions.py --sources ofac_sdn,seco   # only some lists
 python3 sanctions.py --offline                 # re-merge the latest downloads without fetching
-python3 sanctions.py --out /some/dir           # choose the output directory
+python3 sanctions.py --out /some/dir           # write there instead of output/YYYY-MM-DD_HH-MM-SS_UTC/
 python3 sanctions.py --help
 ```
 

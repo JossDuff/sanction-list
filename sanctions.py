@@ -23,8 +23,8 @@ Sources
   un         UN      UN Security Council consolidated list (binding on all
                      three jurisdictions; largely mirrored by EU and SECO)
 
-Outputs (in --out, default ./output)
------------------------------------
+Outputs (in --out, default ./output/YYYY-MM-DD_HH-MM-SS_UTC)
+----------------------------------------------------------
   sanctions_merged.csv    one row per listed individual per source, common schema
   sanctions_merged.json   same data as JSON (list fields kept as arrays)
   crypto_addresses.csv    every digital currency address attributed to a listed individual
@@ -134,8 +134,12 @@ def tag(key: str) -> str:
     return f"[{SOURCES[key]['jurisdiction'].lower()}]"
 
 
+TIME_FMT = "%Y-%m-%d %H:%M:%S UTC"  # in log lines
+FOLDER_TIME_FMT = "%Y-%m-%d_%H-%M-%S_UTC"  # in the output folder name: no colons or spaces
+
+
 def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return dt.datetime.now(dt.timezone.utc).strftime(TIME_FMT)
 
 
 # --------------------------------------------------------------------------
@@ -521,7 +525,8 @@ def main() -> int:
                     help=f"comma-separated subset of: {', '.join(SOURCES)} (default: all)")
     ap.add_argument("--data-dir", type=Path, default=here / "data",
                     help="where raw downloads are stored (default: ./data)")
-    ap.add_argument("--out", type=Path, default=here / "output", help="output directory (default: ./output)")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="output directory (default: one folder per run, ./output/YYYY-MM-DD_HH-MM-SS_UTC)")
     ap.add_argument("--offline", action="store_true", help="skip downloading, use the newest files in --data-dir")
     ap.add_argument("--retries", type=int, default=5, help="download attempts per source (default: 5)")
     ap.add_argument("--timeout", type=int, default=120, help="network read timeout in seconds (default: 120)")
@@ -532,13 +537,18 @@ def main() -> int:
     if unknown:
         ap.error(f"unknown source(s): {', '.join(unknown)}")
 
+    started = dt.datetime.now(dt.timezone.utc)
+    today = dt.date.today().isoformat()  # raw downloads are grouped by local date
+    if args.out is None:
+        args.out = here / "output" / started.strftime(FOLDER_TIME_FMT)
+
     # Everything logged from here on is also written to <out>/logs.txt.
     global LOG_FILE
     args.out.mkdir(parents=True, exist_ok=True)
     LOG_FILE = open(args.out / "logs.txt", "w", encoding="utf-8")
     try:
-        log(f"Run started at {now()}: {' '.join(sys.argv)}")
-        return run(keys, args)
+        log(f"Run started at {started.strftime(TIME_FMT)}: {' '.join(sys.argv)}")
+        return run(keys, args, today)
     except BaseException:
         LOG_FILE.write(traceback.format_exc())  # stderr gets it from the interpreter
         raise
@@ -548,12 +558,12 @@ def main() -> int:
         LOG_FILE = None
 
 
-def run(keys: list[str], args: argparse.Namespace) -> int:
+def run(keys: list[str], args: argparse.Namespace, today: str) -> int:
     if args.offline:
         log("Offline mode: looking for previous downloads...")
         paths = latest_downloads(keys, args.data_dir)
     else:
-        paths = download_all(keys, args.data_dir / dt.date.today().isoformat(), args.retries, args.timeout)
+        paths = download_all(keys, args.data_dir / today, args.retries, args.timeout)
     if not paths:
         log("Nothing to merge.")
         return 1
