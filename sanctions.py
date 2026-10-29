@@ -528,7 +528,7 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None,
                     help="output directory (default: one folder per run, ./output/YYYY-MM-DD_HH-MM-SS_UTC)")
     ap.add_argument("--offline", action="store_true", help="skip downloading, use the newest files in --data-dir")
-    ap.add_argument("--retries", type=int, default=5, help="download attempts per source (default: 5)")
+    ap.add_argument("--retries", type=int, default=10, help="download attempts per source (default: 10)")
     ap.add_argument("--timeout", type=int, default=120, help="network read timeout in seconds (default: 120)")
     args = ap.parse_args()
 
